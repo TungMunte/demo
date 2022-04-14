@@ -196,33 +196,31 @@ int main(int argc, char *argv[])
 				memcpy(eth->ether_dhost, eth->ether_shost, ETH_ALEN);
 				get_interface_mac(m.interface, eth->ether_shost);
 
-				uint32_t swap = ip_hdr->daddr;
 				ip_hdr->daddr = ip_hdr->saddr;
-				ip_hdr->saddr = swap;
+				ip_hdr->saddr = htonl(inet_addr(get_interface_ip(m.interface)));
 
 				icmp_hdr->type = ICMP_TIME_EXCEEDED;
 				icmp_hdr->code = (uint8_t)0;
-				icmp_hdr->checksum = icmp_checksum((void *)icmp_hdr, sizeof(struct icmphdr));
+				icmp_hdr->checksum = htons(icmp_checksum((void *)icmp_hdr, sizeof(struct icmphdr)));
 
 				send_packet(&m);
 				continue;
 			}
 			ip_hdr->ttl--;
 
-			// 2.4 : Cautare Ã®n tabela de rutare
+			// 2.4 : Cautare în tabela de rutare
 			struct route_table_entry *best_route = find_in_routing_table(rtable01, rtable02, ip_hdr->daddr);
 			if (best_route == NULL)
 			{
 				memcpy(eth->ether_dhost, eth->ether_shost, ETH_ALEN);
 				get_interface_mac(m.interface, eth->ether_shost);
 
-				uint32_t swap = ip_hdr->daddr;
 				ip_hdr->daddr = ip_hdr->saddr;
-				ip_hdr->saddr = swap;
+				ip_hdr->saddr = htonl(inet_addr(get_interface_ip(m.interface)));
 
 				icmp_hdr->type = ICMP_DEST_UNREACH;
 				icmp_hdr->code = (uint8_t)0;
-				icmp_hdr->checksum = icmp_checksum((void *)icmp_hdr, sizeof(struct icmphdr));
+				icmp_hdr->checksum = htons(icmp_checksum((void *)icmp_hdr, sizeof(struct icmphdr)));
 
 				send_packet(&m);
 				continue;
@@ -234,22 +232,19 @@ int main(int argc, char *argv[])
 
 			// 2.6 : Rescriere adrese L2
 			// protocol ARP
-			// 3.1 : Cautare Ã®n cache
+			// 3.1 : Cautare în cache
 			struct arp_entry *arp_mac_found = find_in_cache(cache, best_route->next_hop);
+			memcpy(eth->ether_shost, eth->ether_dhost, ETH_ALEN);
+			ip_hdr->saddr = ip_hdr->daddr;
+			ip_hdr->daddr = htonl(best_route->next_hop);
 			if (arp_mac_found != NULL)
 			{
-				memcpy(eth->ether_shost, eth->ether_dhost, ETH_ALEN);
-				ip_hdr->saddr = ip_hdr->daddr;
 				memcpy(eth->ether_dhost, arp_mac_found->mac, ETH_ALEN);
-				ip_hdr->daddr = htonl((uint32_t)arp_mac_found->ip);
 				send_packet(&m);
 			}
 			else
 			{
-				// adaugat Ã®ntr-o coada
-				memcpy(eth->ether_shost, eth->ether_dhost, ETH_ALEN);
-				ip_hdr->saddr = ip_hdr->daddr;
-				ip_hdr->daddr = htonl(best_route->next_hop);
+				// adaugat într-o coada
 				queue_enq(packet_wait_to_send, (packet *)&m);
 
 				// Generare ARP request
@@ -271,10 +266,15 @@ int main(int argc, char *argv[])
 				ARP_header->op = htons(ARPOP_REQUEST);
 				ARP_header->hlen = (uint8_t)6;
 				ARP_header->plen = (uint8_t)4;
-				memcpy(ARP_header->sha, eth_arp->ether_shost, 6);
-				memcpy(ARP_header->tha, eth_arp->ether_dhost, 6);
-				ARP_header->spa = best_route->next_hop;
-				ARP_header->tpa = inet_addr(get_interface_ip(best_route->interface));
+
+				for (size_t i = 0; i < ETH_ALEN; i++)
+				{
+					ARP_header->tha[i] = 0x00;
+				}
+				ARP_header->tpa = htonl(best_route->next_hop);
+
+				memcpy(ARP_header->sha, eth_arp->ether_shost, ETH_ALEN);
+				ARP_header->spa = htonl(ip_hdr->saddr);
 
 				arp_request.len = sizeof(struct ether_header) + sizeof(struct arp_header);
 				arp_request.interface = best_route->interface;
@@ -293,13 +293,12 @@ int main(int argc, char *argv[])
 				queue_enq(cache, arp_current);
 
 				struct queue *restore = queue_create();
-
 				while (queue_empty(packet_wait_to_send) == 0)
 				{
 					packet *temp = (packet *)queue_deq(packet_wait_to_send);
 					struct iphdr *ip_hdr_current = (struct iphdr *)(temp->payload + sizeof(struct ether_header));
 					struct ether_header *eth_current = (struct ether_header *)temp->payload;
-					if (ip_hdr_current->daddr == htonl((uint32_t)arp_current->ip))
+					if (ip_hdr_current->daddr == (uint32_t)arp_current->ip)
 					{
 						memcpy(eth_current->ether_dhost, arp_current->mac, ETH_ALEN);
 						send_packet(temp);
@@ -314,6 +313,27 @@ int main(int argc, char *argv[])
 					queue_enq(packet_wait_to_send, (packet *)queue_deq(restore));
 				}
 				continue;
+			}
+			else if (ntohs(ARP_header->op) == ARPOP_REQUEST)
+			{
+				struct arp_entry *arp_mac_found = find_in_cache(cache, ARP_header->tpa);
+				if (arp_mac_found != NULL)
+				{
+					memcpy(eth->ether_dhost, eth->ether_shost, ETH_ALEN);
+					memcpy(eth->ether_shost, arp_mac_found->mac, ETH_ALEN);
+
+					memcpy(ARP_header->tha, ARP_header->sha, ETH_ALEN);
+					memcpy(ARP_header->sha, arp_mac_found->mac, ETH_ALEN);
+
+					uint32_t swap = ARP_header->spa;
+					ARP_header->spa = ARP_header->tpa;
+					ARP_header->tpa = swap;
+					send_packet(&m);
+				}
+				else
+				{
+					continue;
+				}
 			}
 		}
 	}
