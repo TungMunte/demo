@@ -1,11 +1,12 @@
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 
 // SMTP protocol
 #define BUFLEN 3000
@@ -23,21 +24,41 @@
 		}                                 \
 	} while (0)
 
+int wait_for_respond(int socket, char *expecting)
+{
+	char buffer[BUFLEN];
+	int bytes_received = recv(socket, buffer, BUFLEN, 0);
+	DIE(bytes_received < 0, "greeting");
+
+	printf("Received: %s\n", buffer);
+	if (strcmp(buffer, expecting) == 0)
+	{
+		return 1;
+	}
+	return 0;
+}
+
+void send_PROT(int socket, char *expecting)
+{
+	char buffer[BUFLEN];
+	memset(buffer, 0, sizeof(buffer));
+	strcpy(buffer, expecting);
+	int n = send(socket, buffer, strlen(buffer), 0);
+	DIE(n < 0, "send");
+}
+
+
+void usage(char *file)
+{
+	fprintf(stderr, "Usage: %s server_address server_port\n", file);
+	exit(0);
+}
+
 int main(int argc, char *argv[])
 {
 	int sockfd, n, ret;
 	struct sockaddr_in serv_addr;
 	char buffer[BUFLEN];
-
-	int HELO = 0; // 0 - not done, 1 - done
-	int MAIL = 0; // 0 - not done, 1 - done
-	int RCPT = 0; // 0 - not done, 1 - done
-	int DATA = 0; // 0 - not done, 1 - done
-	int QUIT = 0; // 0 - not done, 1 - done
-
-	char *id_client = argv[1];
-	char *ip_server = argv[2];
-	char *port = argv[3];
 
 	fd_set read_fds; // multimea de citire folosita in select()
 	fd_set tmp_fds;	 // multime folosita temporar
@@ -45,6 +66,11 @@ int main(int argc, char *argv[])
 
 	FD_ZERO(&read_fds);
 	FD_ZERO(&tmp_fds);
+
+	if (argc < 3)
+	{
+		usage(argv[0]);
+	}
 
 	sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	DIE(sockfd < 0, "socket");
@@ -61,6 +87,13 @@ int main(int argc, char *argv[])
 	fdmax = sockfd;
 	FD_SET(STDIN_FILENO, &read_fds);
 
+	// list of protocols
+	int generate = 0;
+	int HELO = 0; // 0 - not done, 1 - done
+	int MAIL = 0; // 0 - not done, 1 - done
+	int RCPT = 0; // 0 - not done, 1 - done
+	int DATA = 0; // 0 - not done, 1 - done
+	int QUIT = 0; // 0 - not done, 1 - done
 	while (1)
 	{
 		tmp_fds = read_fds;
@@ -68,76 +101,41 @@ int main(int argc, char *argv[])
 		ret = select(fdmax + 1, &tmp_fds, NULL, NULL, NULL);
 		DIE(ret < 0, "select");
 
-		if (FD_ISSET(STDIN_FILENO, &tmp_fds))
+		if (FD_ISSET(sockfd, &tmp_fds))
 		{
-			// if (HELO == 1)
-			// {
-			// 	if (MAIL == 1)
-			// 	{
-			// 		if (RCPT == 1)
-			// 		{
-			// 			if (DATA == 1)
-			// 			{
-			// 				// se citeste de la stdin
-			// 				memset(buffer, 0, sizeof(buffer));
-			// 				n = read(0, buffer, sizeof(buffer) - 1);
-			// 				DIE(n < 0, "read");
-
-			// 				if (strncmp(buffer, "exit", 4) == 0)
-			// 				{
-			// 					break;
-			// 				}
-
-			// 				// se trimite mesaj la server
-			// 				n = send(sockfd, buffer, strlen(buffer), 0);
-			// 				DIE(n < 0, "send");
-			// 			}
-			// 		}
-			// 	}
-			// }
-			// se citeste de la stdin
-			memset(buffer, 0, sizeof(buffer));
-			n = read(0, buffer, sizeof(buffer) - 1);
-			DIE(n < 0, "read");
-
-			if (strncmp(buffer, "exit", 4) == 0)
+			if (wait_for_respond(sockfd, "220") == 1)
 			{
-				break;
-			}
-		}
-		else
-		{
-			memset(buffer, 0, sizeof(buffer));
-			// se primeste mesaj la server
-			n = recv(sockfd, buffer, BUFLEN, 0);
-			if (strcmp(buffer, "220") == 0 && HELO == 0)
-			{
-				memset(buffer, 0, sizeof(buffer));
-				strcpy(buffer, "HELO");
-				n = send(sockfd, buffer, strlen(buffer), 0);
-				DIE(n < 0, "send");
-				HELO = 1;
-			}
-			if (strcmp(buffer, "250") == 0 && HELO == 1)
-			{
-				memset(buffer, 0, sizeof(buffer));
-				strcpy(buffer, "MAIL ");
-				strcat(buffer, id_client);
-				strcat(buffer, " ");
-				strcat(buffer, ip_server);
-				strcat(buffer, " ");
-				strcat(buffer, port);
-				n = send(sockfd, buffer, strlen(buffer), 0);
-				DIE(n < 0, "send");
-				MAIL = 1;
+				send_PROT(sockfd, "HELO");
 			}
 
-			DIE(n < 0, "recv");
-			printf("Received: %s", buffer);
+			if (wait_for_respond(sockfd, "250 helo") == 1)
+			{
+				char mesg[BUFLEN];
+				strcpy(mesg, "MAIL");
+				strcat(mesg, " ");
+				strcat(mesg, argv[3]);
+				strcat(mesg, " ");
+				strcat(mesg, argv[2]);
+				strcat(mesg, " ");
+				strcat(mesg, argv[1]);
+				send_PROT(sockfd, mesg);
+			}
+
+			if (wait_for_respond(sockfd, "250 ok") == 1)
+			{
+				send_PROT(sockfd, "RCPT");
+			}
+
+			if (wait_for_respond(sockfd, "250 accept") == 1)
+			{
+				send_PROT(sockfd, "DATA");
+			}
+			
+			if (wait_for_respond(sockfd, "354") == 1)
+			{
+			}
 		}
 	}
-
 	close(sockfd);
-
 	return 0;
 }
