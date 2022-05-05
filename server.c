@@ -36,7 +36,7 @@ typedef struct
     int RCPT; // 0 - not done, 1 - done
     int DATA; // 0 - not done, 1 - done
     int QUIT; // 0 - not done, 1 - done
-    char id_client[2];
+    char id_client[3];
     char ip[15];
     char port[10];
     int number_of_sub;
@@ -82,7 +82,7 @@ void process_payload_and_send(int socket, char *read, char *ip_udp_client, char 
         snprintf(message, BUFLEN, "%s:%s - %s - %s - %s", ip_udp_client, port_udp_client, topic, "STRING", value);
         send(socket, message, BUFLEN, 0);
     }
-    if ((int)read[50] == 2)
+    else if ((int)read[50] == 2)
     {
         uint8_t byte_sign = (uint8_t)value[0];
         uint8_t byte_1 = (uint8_t)value[1];
@@ -110,7 +110,7 @@ void process_payload_and_send(int socket, char *read, char *ip_udp_client, char 
         }
         send(socket, message, BUFLEN, 0);
     }
-    if ((int)read[50] == 1)
+    else if ((int)read[50] == 1)
     {
         uint8_t byte_0 = (uint8_t)value[0];
         uint8_t byte_1 = (uint8_t)value[1];
@@ -127,7 +127,7 @@ void process_payload_and_send(int socket, char *read, char *ip_udp_client, char 
         snprintf(message, BUFLEN, "%s:%s - %s - %s - %s", ip_udp_client, port_udp_client, topic, "SHORT_REAL", demo);
         send(socket, message, BUFLEN, 0);
     }
-    if ((int)read[50] == 0)
+    else if ((int)read[50] == 0)
     {
         uint8_t byte_sign = (uint8_t)value[0];
         uint8_t byte_1 = (uint8_t)value[1];
@@ -171,6 +171,7 @@ int main(int argc, char *argv[])
     {
         client[i].disconnect = 0;
         client[i].generate = 0;
+        client[i].online = 0;
         client[i].HELO = 0;
         client[i].DATA = 0;
         client[i].MAIL = 0;
@@ -393,16 +394,18 @@ int main(int argc, char *argv[])
                                     const char s[2] = " ";
                                     token = strtok(buffer, s);
                                     int count = 0;
-                                    char *id = (char *)malloc(sizeof(char) * 5);
+                                    char *id = (char *)malloc(sizeof(char) * 2);
+                                    char *port = (char *)malloc(sizeof(char) * 10);
+                                    char *ip = (char *)malloc(sizeof(char) * 15);
                                     while (token != NULL)
                                     {
                                         if (count == 1)
                                         {
-                                            strcpy(client[l].port, token);
+                                            strcpy(port, token);
                                         }
                                         if (count == 2)
                                         {
-                                            strcpy(client[l].ip, token);
+                                            strcpy(ip, token);
                                         }
                                         if (count == 3)
                                         {
@@ -417,7 +420,7 @@ int main(int argc, char *argv[])
                                     {
                                         for (size_t count = 0; count < j - 1; count++)
                                         {
-                                            if (strcmp(client[count].id_client, id) == 0 && client[count].online == 1 && client[count].disconnect == 0)
+                                            if (strcmp(client[count].id_client, id) == 0 && client[count].online == 1)
                                             {
                                                 client[l].generate = 0;
                                                 client[l].HELO = 0;
@@ -426,11 +429,15 @@ int main(int argc, char *argv[])
                                                 client[l].RCPT = 0;
                                                 client[l].QUIT = 0;
                                                 check_same_id = 1;
-                                                printf("Client %s already connected.\n", id);
+
                                                 strcpy(buffer, "exit");
                                                 send(client[l].socket_of_client, buffer, BUFLEN, 0);
                                                 close(client[l].socket_of_client);
                                                 FD_CLR(client[l].socket_of_client, &read_fds);
+
+                                                fprintf(stderr , "Client %s already connected.\n", client[count].id_client);
+
+                                
                                             }
                                             else if (strcmp(client[count].id_client, id) == 0 && client[count].online == 0 && client[count].disconnect == 1)
                                             {
@@ -443,17 +450,18 @@ int main(int argc, char *argv[])
                                                 client[count].RCPT = 0;
                                                 client[count].QUIT = 0;
 
-                                                close(client[l].socket_of_client);
-                                                FD_CLR(client[l].socket_of_client, &read_fds);
-                                                FD_SET(client[count].socket_of_client, &read_fds);
-                                                check_same_id = 1;
+                                                client[count].socket_of_client = client[l].socket_of_client;
+                                                check_same_id = 0;
+                                                j--;
                                             }
                                         }
                                     }
 
                                     if (check_same_id == 0)
                                     {
-                                        strcpy(client[l].id_client, id);
+                                        snprintf(client[l].id_client, 3, "%s", id);
+                                        snprintf(client[l].ip, 15, "%s", ip);
+                                        snprintf(client[l].port, 10, "%s", port);
                                         printf("New client %s connected from %s:%s\n", client[l].id_client, client[l].ip, client[l].port);
                                         strcpy(buffer, "250 ok");
                                         send(client[l].socket_of_client, buffer, BUFLEN, 0);

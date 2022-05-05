@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
                 const char s[2] = " ";
                 token = strtok(buffer, s);
                 token = strtok(NULL, s);
-                char *topic;
+                char *topic = (char *)malloc(sizeof(char) * 100);
                 strcpy(topic, token);
                 printf("Unsubscribed from %s\n", topic);
                 n = send(sockfd, buffer, strlen(buffer), 0);
@@ -127,14 +127,20 @@ int main(int argc, char *argv[])
             }
             if (condition_to_stop == 10)
             {
+                close(STDIN_FILENO);
+                close(sockfd);
+                exit(EXIT_SUCCESS);
                 break;
             }
             if (ready_to_connect == 1 && bytes_received > 0)
             {
-                printf("%s\n");
+                fprintf(stdout, "%s\n", buffer);
             }
             else if (strcmp(buffer, "exit") == 0)
             {
+                close(STDIN_FILENO);
+                close(sockfd);
+                exit(EXIT_SUCCESS);
                 break;
             }
             else if (strcmp(buffer, "220") == 0 && ready_to_connect == 0)
@@ -165,10 +171,30 @@ int main(int argc, char *argv[])
             {
                 ready_to_connect = 1;
             }
-            
         }
     }
     close(STDIN_FILENO);
     close(sockfd);
     return 0;
 }
+
+/*
+
+    ret.append(Topic("a_non_negative_int", "INT", "10"))
+    ret.append(Topic("a_negative_int", "INT", "-10"))
+    ret.append(Topic("a_larger_value", "INT", "1234567890"))
+    ret.append(Topic("a_large_negative_value", "INT", "-1234567890"))
+    ret.append(Topic("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx", "INT", "10"))
+    ret.append(Topic("that_is_small_short_real", "SHORT_REAL", "2.30"))
+    ret.append(Topic("that_is_big_short_real", "SHORT_REAL", "655.05"))
+    ret.append(Topic("that_is_integer_short_real", "SHORT_REAL", "17"))
+    ret.append(Topic("float_seventeen", "FLOAT", "17"))
+    ret.append(Topic("float_minus_seventeen", "FLOAT", "-17"))
+    ret.append(Topic("a_strange_float", "FLOAT", "1234.4321"))
+    ret.append(Topic("a_negative_strange_float", "FLOAT", "-1234.4321"))
+    ret.append(Topic("a_subunitary_float", "FLOAT", "0.042"))
+    ret.append(Topic("a_negative_subunitary_float", "FLOAT", "-0.042"))
+    ret.append(Topic("ana_string_announce", "STRING", "Ana are mere"))
+    ret.append(Topic("huge_string", "STRING", "abcdefghijklmnopqrstuvwxyz"))
+
+*/
